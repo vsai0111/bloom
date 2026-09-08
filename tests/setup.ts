@@ -8,5 +8,8 @@ process.env.BLOOM_AUTH_SECRET ||= 'test-secret-not-used-in-production-0000000000
 process.env.BLOOM_LOG_LEVEL ||= 'error'
 delete process.env.DATABASE_URL
 delete process.env.NEXT_PUBLIC_SUPABASE_URL
+delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+// Also strip the pre-rename name: it still drives the migration guard in
+// config/env.server.ts, and a developer's stale .env would otherwise leak in.
 delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 delete process.env.NEXT_PUBLIC_POSTHOG_KEY

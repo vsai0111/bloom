@@ -3,7 +3,8 @@ import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import { supabaseAuthConfigured } from '@/config/env.server'
 import { getDb } from '@/lib/db'
-import type { Profile, SessionUser } from '@/types/user'
+import type { Db } from '@/lib/db/types'
+import type { AuthUser, Profile, SessionUser } from '@/types/user'
 import { LocalAuthProvider } from './local-provider'
 import { SupabaseAuthProvider } from './supabase-provider'
 import type { AuthProvider } from './types'
@@ -43,6 +44,21 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   if (!user) return null
 
   const db = await getDb()
+  return { ...user, profile: await ensureProfile(db, user) }
+})
+
+/**
+ * Create this user's profile row if it does not exist, and return it.
+ *
+ * Idempotent, and the single place a profile comes into being. It has to be
+ * callable outside a rendered session because `user_events.user_id` references
+ * `profiles (id)`: anything recording an event for a freshly authenticated user
+ * — signup and first sign-in both do — must provision the profile first, or the
+ * insert dies on `user_events_user_id_fkey`. `recordEvent` swallows that error
+ * by design, so the symptom is a silently missing funnel row rather than a
+ * visible failure.
+ */
+export async function ensureProfile(db: Db, user: AuthUser): Promise<Profile> {
   const rows = await db.query<{
     id: string
     display_name: string
@@ -57,15 +73,13 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   )
 
   const row = rows[0]
-  const profile: Profile = {
+  return {
     id: row.id,
     displayName: row.display_name,
     onboardingCompleted: row.onboarding_completed,
     createdAt: String(row.created_at),
   }
-
-  return { ...user, profile }
-})
+}
 
 /**
  * Require an authenticated user, redirecting to sign-in when there is none.

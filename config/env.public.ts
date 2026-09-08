@@ -8,13 +8,15 @@
 export const publicEnv = {
   appUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+  supabasePublishableKey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '',
   posthogKey: process.env.NEXT_PUBLIC_POSTHOG_KEY || '',
   posthogHost: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
 } as const
 
 /** True when Supabase Auth is configured for the browser. */
-export const supabaseAuthEnabled = Boolean(publicEnv.supabaseUrl && publicEnv.supabaseAnonKey)
+export const supabaseAuthEnabled = Boolean(
+  publicEnv.supabaseUrl && publicEnv.supabasePublishableKey,
+)
 
 /** True when a third-party analytics sink is configured. */
 export const posthogEnabled = Boolean(publicEnv.posthogKey)

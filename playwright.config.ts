@@ -31,6 +31,21 @@ export default defineConfig({
       PGLITE_DATA_DIR: '.bloom/e2e-pgdata',
       BLOOM_AUTH_SECRET: 'e2e-secret-0000000000000000000000000000',
       BLOOM_LOG_LEVEL: 'error',
+      /*
+       * Force the local auth provider and the embedded database.
+       *
+       * `next start` loads `.env.local`, so without these a developer who has
+       * configured a real Supabase project runs the whole journey against it:
+       * every signup creates a live user and sends a real verification email,
+       * until the project's send rate limit rejects the rest. The suite then
+       * fails for a reason that has nothing to do with the code under test.
+       *
+       * Empty rather than deleted because `@next/env` only fills in variables
+       * that are absent from the environment.
+       */
+      NEXT_PUBLIC_SUPABASE_URL: '',
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: '',
+      DATABASE_URL: '',
     },
   },
 })

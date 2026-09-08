@@ -2,11 +2,13 @@
 
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
-import { getAuthProvider } from '@/lib/auth'
+import { ensureProfile, getAuthProvider } from '@/lib/auth'
 import { getDb } from '@/lib/db'
+import type { Db } from '@/lib/db/types'
+import type { AuthUser } from '@/types/user'
 import { recordEvent } from '@/lib/analytics/events'
 import { ensureSessionId } from '@/lib/analytics/session'
-import { reportError } from '@/lib/logging/logger'
+import { logger, reportError } from '@/lib/logging/logger'
 import { safeInternalPath } from '@/lib/utils/url'
 
 /**
@@ -25,6 +27,12 @@ export interface AuthFormState {
   error?: string
   /** Field the error belongs to, for aria-describedby wiring. */
   field?: 'email' | 'password'
+  /**
+   * Set when the account was created but the provider requires the address to
+   * be verified before a session exists. The form renders confirmation
+   * instructions instead of navigating, since there is nowhere to navigate to.
+   */
+  verificationEmail?: string
 }
 
 const credentials = z.object({
@@ -64,11 +72,25 @@ export async function signUpAction(
       }
     }
 
-    await recordEvent(db, {
-      userId: result.user.id,
-      sessionId,
-      eventType: 'signup_completed',
-    })
+    // `user_events.user_id` references `profiles (id)`, so the profile has to
+    // exist before the event can name the user. Provisioning is idempotent and
+    // was previously deferred to the first authenticated page render, which is
+    // after this point — so this event was failing its foreign key and being
+    // dropped silently.
+    if (await provisionProfile(db, result.user, 'signUp')) {
+      await recordEvent(db, {
+        userId: result.user.id,
+        sessionId,
+        eventType: 'signup_completed',
+      })
+    }
+
+    // No session exists yet: the account is awaiting email verification. Tell
+    // the user, rather than redirecting into a route that will bounce them to
+    // sign-in where the only feedback is an authentication error.
+    if (result.confirmationRequired) {
+      return { verificationEmail: result.user.email }
+    }
 
     redirect(next)
   } catch (error) {
@@ -96,15 +118,25 @@ export async function signInAction(
     if (!result.ok) {
       // Deliberately the same message whether the email is unknown or the
       // password is wrong, so this page cannot be used to enumerate accounts.
-      return { error: result.message, field: 'password' }
+      // An unconfirmed address is the exception: it is not an enumeration
+      // signal (the person just submitted the signup form) and it is the one
+      // case where the user can actually do something about it.
+      return {
+        error: result.message,
+        field: result.code === 'email_not_confirmed' ? undefined : 'password',
+      }
     }
 
     const db = await getDb()
-    await recordEvent(db, {
-      userId: result.user.id,
-      sessionId: await ensureSessionId(),
-      eventType: 'signin_completed',
-    })
+    // Same ordering requirement as signup: first sign-in is the other moment a
+    // user exists without a profile row yet.
+    if (await provisionProfile(db, result.user, 'signIn')) {
+      await recordEvent(db, {
+        userId: result.user.id,
+        sessionId: await ensureSessionId(),
+        eventType: 'signin_completed',
+      })
+    }
 
     redirect(next)
   } catch (error) {
@@ -117,6 +149,27 @@ export async function signInAction(
 export async function signOutAction(): Promise<void> {
   await getAuthProvider().signOut()
   redirect('/')
+}
+
+/**
+ * Create the profile row that a funnel event points at, reporting whether it
+ * exists afterwards.
+ *
+ * Failure is deliberately not fatal. Supabase answers a repeat signup for an
+ * address it already knows with a synthetic user id it never stored in
+ * `auth.users` — that is its defence against account enumeration — and
+ * `profiles.id` references that table. Refusing the signup in that case would
+ * both break a flow Supabase considers successful and leak the fact that the
+ * address is taken. Losing one analytics row is the cheaper trade.
+ */
+async function provisionProfile(db: Db, user: AuthUser, operation: string): Promise<boolean> {
+  try {
+    await ensureProfile(db, user)
+    return true
+  } catch (error) {
+    logger.warn('could not provision profile; funnel event skipped', { operation, error })
+    return false
+  }
 }
 
 /** Next.js signals navigation by throwing; those must propagate, not be logged. */

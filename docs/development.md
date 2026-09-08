@@ -64,7 +64,7 @@ Sessions are HMAC-signed HttpOnly cookies. In development the signing key is
 generated per process, so restarting the dev server signs you out.
 
 **Supabase Auth.** Used automatically when `NEXT_PUBLIC_SUPABASE_URL` and
-`NEXT_PUBLIC_SUPABASE_ANON_KEY` are set.
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are set.
 
 > The Supabase path is complete and type-checked but **has not been run against
 > a live Supabase project**, because no credentials have been provisioned. Treat

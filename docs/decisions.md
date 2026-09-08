@@ -289,3 +289,48 @@ that is per-instance and does not survive a cold start. That is a demonstration
 mode, not a production database, and it says so in the logs on every connect.
 The durable fix remains setting `DATABASE_URL`; this ADR only ensures the
 failure mode is an honest warning instead of a crash.
+
+---
+
+## ADR-0016 — Production names its database driver; `auto` is development-only
+
+**Status:** Accepted. Supersedes the "deployment without DATABASE_URL serves"
+consequence of [ADR-0015](#adr-0015--the-embedded-database-resolves-its-location-from-the-runtime-not-the-project).
+
+**Decision.** `resolveDbDriver()` refuses `BLOOM_DB_DRIVER=auto` when
+`NODE_ENV=production`. Production sets `postgres` (with `DATABASE_URL`) or, for
+a deliberate throwaway deployment, `pglite`. Development and test are unchanged.
+
+**Rationale.** `auto` decides by asking whether `DATABASE_URL` is present, so a
+missing, misspelled or unpropagated connection string does not fail — it selects
+the embedded database. The deployment then serves, returns 200, and is backed by
+a per-instance store that empties on every cold start. Silently serving from a
+throwaway database is a worse failure than refusing to boot, because nothing
+about it looks wrong until user data goes missing.
+
+**Consequences.** A production deployment that has not yet been given a
+`DATABASE_URL` must say `BLOOM_DB_DRIVER=pglite` out loud to keep serving. The
+E2E suite already does this, since it runs a production build against the
+embedded database.
+
+---
+
+## ADR-0017 — Supabase's publishable key, under its current name only
+
+**Status:** Accepted
+
+**Decision.** Bloom reads `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The former
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` is not read, and a configuration carrying only
+the old name fails the boot in production (a warning in development). No
+elevated Supabase API key — service-role or secret — is read anywhere in the
+codebase.
+
+**Rationale.** Supabase renamed the browser-safe key. Accepting both names
+indefinitely would leave two spellings of one secret drifting apart across
+environments. But dropping the old name silently is worse: an unconfigured
+Supabase means `supabaseAuthConfigured()` returns false and the local auth
+provider takes over, which in production is an outage that presents as a working
+sign-in page. The guard converts that into an explicit failure naming the fix.
+
+**Consequences.** Renaming the variable is a required manual step in every
+environment that had the old one. There is no fallback to remove later.

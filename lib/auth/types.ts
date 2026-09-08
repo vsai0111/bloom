@@ -14,13 +14,24 @@ import type { AuthUser } from '@/types/user'
  */
 
 export type AuthResult =
-  { ok: true; user: AuthUser } | { ok: false; code: AuthErrorCode; message: string }
+  | {
+      ok: true
+      user: AuthUser
+      /**
+       * The account exists but no session was established, because the provider
+       * requires the email address to be confirmed first. The caller must not
+       * treat this as "signed in" — there is nothing to sign in with yet.
+       */
+      confirmationRequired?: boolean
+    }
+  | { ok: false; code: AuthErrorCode; message: string }
 
 export type AuthErrorCode =
   | 'invalid_credentials'
   | 'email_taken'
   | 'weak_password'
   | 'invalid_email'
+  | 'email_not_confirmed'
   | 'not_authenticated'
   | 'rate_limited'
   | 'unavailable'

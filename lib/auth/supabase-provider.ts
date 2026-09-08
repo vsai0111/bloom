@@ -9,9 +9,9 @@ import type { AuthProvider, AuthErrorCode, AuthResult } from './types'
  * Supabase Auth provider — the production path.
  *
  * Uses `@supabase/ssr` so the session lives in HttpOnly cookies managed by
- * Supabase and is verified server-side on every request. The anon key is the
- * only key used here; the service-role key is never touched by request-handling
- * code.
+ * Supabase and is verified server-side on every request. The publishable key is
+ * the only key used here; no elevated Supabase API key is used by
+ * request-handling code, or configured at all.
  *
  * NOT YET EXERCISED AGAINST A REAL PROJECT: no Supabase credentials have been
  * provisioned (see docs/development.md, "What I need from you"). The code path
@@ -24,7 +24,7 @@ export class SupabaseAuthProvider implements AuthProvider {
   private async client() {
     const cookieStore = await cookies()
 
-    return createServerClient(publicEnv.supabaseUrl, publicEnv.supabaseAnonKey, {
+    return createServerClient(publicEnv.supabaseUrl, publicEnv.supabasePublishableKey, {
       cookies: {
         getAll() {
           return cookieStore.getAll()
@@ -47,6 +47,15 @@ export class SupabaseAuthProvider implements AuthProvider {
     const text = message.toLowerCase()
     if (text.includes('already registered') || text.includes('already exists')) {
       return { code: 'email_taken', message: 'An account already exists for that email address.' }
+    }
+    // Must precede the generic `email` branch below, which would otherwise
+    // report an unverified address as a malformed one.
+    if (text.includes('not confirmed') || text.includes('email_not_confirmed')) {
+      return {
+        code: 'email_not_confirmed',
+        message:
+          'Confirm your email address before signing in. Check your inbox for the verification link.',
+      }
     }
     if (text.includes('invalid login') || text.includes('invalid credentials')) {
       return {
@@ -82,7 +91,15 @@ export class SupabaseAuthProvider implements AuthProvider {
       }
     }
 
-    return { ok: true, user: { id: data.user.id, email: data.user.email ?? email } }
+    // Supabase returns a user but no session when email confirmation is on. The
+    // account is real and the verification mail has been sent; the caller must
+    // say so rather than redirecting into a protected route that will bounce
+    // straight back to sign-in with no explanation.
+    return {
+      ok: true,
+      user: { id: data.user.id, email: data.user.email ?? email },
+      confirmationRequired: !data.session,
+    }
   }
 
   async signIn({ email, password }: { email: string; password: string }): Promise<AuthResult> {

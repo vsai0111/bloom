@@ -21,19 +21,19 @@ These require your action; they cannot be done from the codebase.
 Every variable is documented in `.env.example`. The ones that matter in
 production:
 
-| Variable                        | Required                   | Notes                                                                                              |
-| ------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                  | Yes                        | Supabase pooler connection string. Absent → the ephemeral embedded database (see below)            |
-| `BLOOM_DB_DRIVER`               | Recommended                | Set to `postgres` so a missing URL fails loudly rather than silently starting an embedded database |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Yes                        | Enables Supabase Auth                                                                              |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes                        | Public by design — RLS is what makes it safe                                                       |
-| `SUPABASE_SERVICE_ROLE_KEY`     | Only if needed             | **Server-only. Never expose.** Not used by request-handling code                                   |
-| `BLOOM_AUTH_SECRET`             | If not using Supabase Auth | 32+ random bytes. The app refuses to start the local provider in production without it             |
-| `NEXT_PUBLIC_APP_URL`           | Yes                        | Absolute URL of the deployment                                                                     |
-| `NEXT_PUBLIC_POSTHOG_KEY`       | Optional                   | Absent → no analytics network calls at all                                                         |
-| `SENTRY_DSN`                    | Optional                   | See below                                                                                          |
-| `BLOOM_LOG_LEVEL`               | Optional                   | `info` in production                                                                               |
-| `BLOOM_EPHEMERAL_DATA_DIR`      | Rarely                     | `1`/`0` to force the temp-directory data dir on a read-only runtime Bloom does not auto-detect     |
+| Variable                               | Required                   | Notes                                                                                          |
+| -------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                         | Yes                        | Supabase pooler connection string. Absent → the ephemeral embedded database (see below)        |
+| `BLOOM_DB_DRIVER`                      | **Yes**                    | Must be `postgres` in production. `auto` is refused there — see below                          |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes                        | Enables Supabase Auth                                                                          |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes                        | Supabase's renamed anon key. Public by design — RLS is what makes it safe                      |
+| `SUPABASE_SERVICE_ROLE_KEY`            | No — do not set            | Nothing in Bloom reads it. Setting it adds an RLS-bypass credential for no gain                |
+| `BLOOM_AUTH_SECRET`                    | If not using Supabase Auth | 32+ random bytes. The app refuses to start the local provider in production without it         |
+| `NEXT_PUBLIC_APP_URL`                  | Yes                        | Absolute URL of the deployment                                                                 |
+| `NEXT_PUBLIC_POSTHOG_KEY`              | Optional                   | Absent → no analytics network calls at all                                                     |
+| `SENTRY_DSN`                           | Optional                   | See below                                                                                      |
+| `BLOOM_LOG_LEVEL`                      | Optional                   | `info` in production                                                                           |
+| `BLOOM_EPHEMERAL_DATA_DIR`             | Rarely                     | `1`/`0` to force the temp-directory data dir on a read-only runtime Bloom does not auto-detect |
 
 Generate an auth secret:
 
@@ -45,26 +45,27 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 key must never appear in any `NEXT_PUBLIC_*` variable — anything so prefixed is
 compiled into the browser bundle.
 
-## Deploying before Supabase exists
+## Production must name its database driver
 
-A deployment with no `DATABASE_URL` does **not** fail. `BLOOM_DB_DRIVER=auto`
-resolves to the embedded PGlite driver, and the app serves normally.
+`BLOOM_DB_DRIVER=auto` is a development convenience and is **refused in
+production**. Booting with it unset (or set to `auto`) raises:
 
-Understand exactly what that gives you, because it is not a database:
+```
+BLOOM_DB_DRIVER must be set explicitly in production. Set BLOOM_DB_DRIVER=postgres
+together with DATABASE_URL (the Supabase pooler connection string).
+```
 
-- Storage lives in the OS temp directory (`/tmp` on Vercel), never in the
-  deployment bundle — which is read-only, and where writing produced the
-  original `ENOENT: mkdir '.bloom'` failure.
-- It is **per instance**. Two concurrent serverless instances have two separate
-  databases, and a recycled instance starts empty and re-seeds from scratch.
-- Nothing a visitor does survives. Accounts, saved products and learned
-  preferences are all lost on the next cold start.
+The reason is that `auto` decides by looking for `DATABASE_URL`, so a missing or
+misspelled connection string quietly selects the embedded PGlite database
+instead. The deployment then serves and looks healthy while backed by a store
+that is per-instance, lives in the OS temp directory, and empties on every cold
+start — losing accounts, saved products and learned preferences. A silent
+downgrade to a throwaway database is worse than a failed boot, so production has
+to say what it wants.
 
-That is fine for showing the product working end to end on a real URL. It is not
-fine for anything with users. Every cold start logs a warning to that effect.
-
-Set `DATABASE_URL` and `BLOOM_DB_DRIVER=postgres` to move to real Postgres; no
-application code changes.
+`BLOOM_DB_DRIVER=pglite` remains available in production for exactly that
+throwaway mode (the E2E suite runs a production build this way), but it must now
+be chosen deliberately. Every cold start on the embedded driver logs a warning.
 
 ## Applying migrations
 
