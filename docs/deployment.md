@@ -23,7 +23,7 @@ production:
 
 | Variable                        | Required                   | Notes                                                                                              |
 | ------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                  | Yes                        | Supabase pooler connection string                                                                  |
+| `DATABASE_URL`                  | Yes                        | Supabase pooler connection string. Absent → the ephemeral embedded database (see below)            |
 | `BLOOM_DB_DRIVER`               | Recommended                | Set to `postgres` so a missing URL fails loudly rather than silently starting an embedded database |
 | `NEXT_PUBLIC_SUPABASE_URL`      | Yes                        | Enables Supabase Auth                                                                              |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes                        | Public by design — RLS is what makes it safe                                                       |
@@ -33,6 +33,7 @@ production:
 | `NEXT_PUBLIC_POSTHOG_KEY`       | Optional                   | Absent → no analytics network calls at all                                                         |
 | `SENTRY_DSN`                    | Optional                   | See below                                                                                          |
 | `BLOOM_LOG_LEVEL`               | Optional                   | `info` in production                                                                               |
+| `BLOOM_EPHEMERAL_DATA_DIR`      | Rarely                     | `1`/`0` to force the temp-directory data dir on a read-only runtime Bloom does not auto-detect     |
 
 Generate an auth secret:
 
@@ -43,6 +44,27 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 **Never commit `.env` or `.env.local`.** Both are git-ignored. The service-role
 key must never appear in any `NEXT_PUBLIC_*` variable — anything so prefixed is
 compiled into the browser bundle.
+
+## Deploying before Supabase exists
+
+A deployment with no `DATABASE_URL` does **not** fail. `BLOOM_DB_DRIVER=auto`
+resolves to the embedded PGlite driver, and the app serves normally.
+
+Understand exactly what that gives you, because it is not a database:
+
+- Storage lives in the OS temp directory (`/tmp` on Vercel), never in the
+  deployment bundle — which is read-only, and where writing produced the
+  original `ENOENT: mkdir '.bloom'` failure.
+- It is **per instance**. Two concurrent serverless instances have two separate
+  databases, and a recycled instance starts empty and re-seeds from scratch.
+- Nothing a visitor does survives. Accounts, saved products and learned
+  preferences are all lost on the next cold start.
+
+That is fine for showing the product working end to end on a real URL. It is not
+fine for anything with users. Every cold start logs a warning to that effect.
+
+Set `DATABASE_URL` and `BLOOM_DB_DRIVER=postgres` to move to real Postgres; no
+application code changes.
 
 ## Applying migrations
 
@@ -119,10 +141,11 @@ returns a short reference id that is safe to show a user.
 
 ## Pre-launch checklist
 
-- [ ] `npm run verify` passes (typecheck, lint, 159 tests)
+- [ ] `npm run verify` passes (typecheck, lint, 182 tests)
 - [ ] `npm run test:e2e` passes against a production build
 - [ ] Migrations applied; RLS verified with the query above
 - [ ] `BLOOM_DB_DRIVER=postgres` set, so a missing `DATABASE_URL` fails loudly
+      rather than falling back to the ephemeral embedded database
 - [ ] `BLOOM_AUTH_SECRET` set (or Supabase Auth configured)
 - [ ] No `NEXT_PUBLIC_*` variable contains a secret
 - [ ] `images.remotePatterns` narrowed to real merchant hosts

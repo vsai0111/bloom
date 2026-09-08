@@ -1,6 +1,7 @@
 import 'server-only'
 import { resolveDbDriver, serverEnv } from '@/config/env.server'
 import { logger } from '@/lib/logging/logger'
+import { resolvePgliteDataDir } from './data-dir'
 import { createPgliteHandle } from './driver-pglite'
 import { createPostgresHandle } from './driver-postgres'
 import type { DbHandle } from './types'
@@ -27,6 +28,21 @@ export async function createDbHandle(): Promise<DbHandle> {
     return createPostgresHandle(env.DATABASE_URL)
   }
 
-  logger.info('starting embedded postgres (pglite)', { dataDir: env.PGLITE_DATA_DIR })
+  const { dir, ephemeral } = resolvePgliteDataDir(env.PGLITE_DATA_DIR)
+
+  if (env.NODE_ENV === 'production') {
+    // Not an error — a deployment with no DATABASE_URL is still expected to
+    // serve — but it must never be mistaken for a durable database.
+    logger.warn(
+      'production is running on the embedded database; state is per-instance and is lost when the instance is recycled. Set DATABASE_URL to use Postgres.',
+      { dataDir: dir ?? 'memory://', ephemeral },
+    )
+  }
+
+  logger.info('starting embedded postgres (pglite)', {
+    configured: env.PGLITE_DATA_DIR,
+    dataDir: dir ?? 'memory://',
+    ephemeral,
+  })
   return createPgliteHandle(env.PGLITE_DATA_DIR)
 }

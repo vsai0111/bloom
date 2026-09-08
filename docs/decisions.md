@@ -263,3 +263,29 @@ by the time it is needed.
 **Consequence.** The one forward-looking accommodation made is data, not code:
 nullable conversion columns on `affiliate_clicks`, so attaching a merchant
 postback later is an `UPDATE` rather than a migration on a table with traffic.
+
+---
+
+## ADR-0015 — The embedded database resolves its location from the runtime, not the project
+
+**Status:** Accepted
+
+**Decision.** `PGLITE_DATA_DIR` is a _configured_ location, not a filesystem
+path to be used verbatim. `lib/db/data-dir.ts` resolves a relative value against
+the project directory on an ordinary machine and against the OS temp directory
+on a read-only serverless runtime. Absolute paths are honoured as given.
+Migrations and the PGlite WASM image are added to the build's file tracing,
+since both are read from disk at runtime rather than imported.
+
+**Rationale.** The default `.bloom/pgdata` is relative, and a relative path is
+meaningless without knowing what it is relative _to_. On Vercel that was the
+read-only deployment bundle, so the first request that touched the database died
+in `mkdir` and returned a 500. The driver had assumed a writable project
+directory — an assumption true of every environment it had been run in, and
+false of the one it was deployed to.
+
+**Consequences.** A deployment without `DATABASE_URL` now serves, on a database
+that is per-instance and does not survive a cold start. That is a demonstration
+mode, not a production database, and it says so in the logs on every connect.
+The durable fix remains setting `DATABASE_URL`; this ADR only ensures the
+failure mode is an honest warning instead of a crash.

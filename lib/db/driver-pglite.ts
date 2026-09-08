@@ -1,4 +1,5 @@
 import 'server-only'
+import { resolvePgliteDataDir } from './data-dir'
 import type { Db, DbHandle } from './types'
 
 /**
@@ -45,15 +46,19 @@ function wrapTx(tx: PGliteTx): Db {
 export async function createPgliteHandle(dataDir: string): Promise<DbHandle> {
   const { PGlite } = await import('@electric-sql/pglite')
 
-  const persistent = dataDir !== 'memory://' && dataDir !== ''
-  if (persistent) {
+  // Never `mkdir` the configured value directly: a relative path resolves
+  // against `process.cwd()`, which is the read-only bundle root under a
+  // serverless runtime. See lib/db/data-dir.ts.
+  const { dir } = resolvePgliteDataDir(dataDir)
+
+  if (dir) {
     // PGlite does not create intermediate directories for its data dir.
     const { mkdir } = await import('node:fs/promises')
-    await mkdir(dataDir, { recursive: true })
+    await mkdir(dir, { recursive: true })
   }
 
   const client = (await PGlite.create({
-    dataDir: persistent ? dataDir : undefined,
+    dataDir: dir ?? undefined,
   })) as unknown as PGliteLike
 
   return {
