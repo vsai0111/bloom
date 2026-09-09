@@ -57,8 +57,18 @@ export function ProductCard({
         </div>
 
         <h3 className="text-ink text-sm leading-snug font-medium">
+          {/*
+            Prefetch is off deliberately. Every card in the feed is a link, and
+            the default viewport prefetch turned one scroll into a burst of
+            background requests for /product/[id] — each one an authenticated
+            dynamic render behind the proxy's session check. Production traces
+            showed seven such requests inside a second from a single feed view.
+            The route is dynamic and personalised, so a prefetched payload is
+            mostly wasted work anyway; app/(app)/loading.tsx covers the wait.
+          */}
           <Link
             href={`/product/${product.id}`}
+            prefetch={false}
             className="after:absolute after:inset-0 after:content-['']"
           >
             {product.canonicalTitle}
