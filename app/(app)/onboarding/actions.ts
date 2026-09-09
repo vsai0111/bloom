@@ -6,7 +6,7 @@ import { CATEGORIES, COLORS, FITS, PRICE_BANDS, STYLES } from '@/config/taxonomy
 import { getSessionUser } from '@/lib/auth'
 import { getDb } from '@/lib/db'
 import { recordEvent } from '@/lib/analytics/events'
-import { upsertPreference } from '@/lib/preferences/repository'
+import { upsertPreferences } from '@/lib/preferences/repository'
 import { reportError } from '@/lib/logging/logger'
 import { ONBOARDING_STEPS, type OnboardingStep } from './steps'
 
@@ -61,19 +61,24 @@ export async function saveOnboardingStepAction(formData: FormData): Promise<void
       .filter((value) => config.allowed.includes(value))
       .slice(0, 12)
 
-    for (const value of values) {
-      // `style` covers both aesthetic styles and fits; route each to the right
-      // attribute so scoring compares like with like.
-      const attribute =
-        step === 'style' && (FITS as readonly string[]).includes(value) ? 'fit' : config.attribute
-
-      await upsertPreference(db, session.id, {
-        attribute,
+    // One statement for the whole step rather than one per answer: each extra
+    // round trip to the database is latency the user waits through, and a step
+    // can carry a dozen answers.
+    await upsertPreferences(
+      db,
+      session.id,
+      values.map((value) => ({
+        // `style` covers both aesthetic styles and fits; route each to the right
+        // attribute so scoring compares like with like.
+        attribute:
+          step === 'style' && (FITS as readonly string[]).includes(value)
+            ? 'fit'
+            : config.attribute,
         value,
         weight: config.weight,
-        source: 'explicit',
-      })
-    }
+        source: 'explicit' as const,
+      })),
+    )
 
     if (values.length > 0) {
       await recordEvent(db, {

@@ -36,7 +36,19 @@ export async function createPostgresHandle(connectionString: string): Promise<Db
 
   const sql = postgres(connectionString, {
     max: 10,
-    idle_timeout: 20,
+    /*
+     * Long enough to survive human-paced navigation.
+     *
+     * At 20s, someone reading an onboarding step outlasted the timeout, so the
+     * next request re-established the connection: TCP, TLS and SCRAM auth,
+     * measured at ~6.4x the cost of a warm query round trip. Against a database
+     * on another continent that is over a second of pure handshake, paid on
+     * almost every request, before any work is done.
+     *
+     * Still bounded rather than disabled, so an instance that is genuinely done
+     * releases its pooler slot well within its own lifetime.
+     */
+    idle_timeout: 180,
     connect_timeout: 15,
     // Supabase's pooler does not support prepared statements in transaction mode.
     prepare: false,

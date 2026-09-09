@@ -83,21 +83,88 @@ export async function upsertPreference(
   userId: string,
   input: PreferenceInput,
 ): Promise<UserPreference | null> {
+  const [preference] = await upsertPreferences(db, userId, [input])
+  return preference ?? null
+}
+
+interface NormalizedPreference {
+  category: string | null
+  attribute: string
+  value: string
+  weight: number
+  source: PreferenceSource
+}
+
+/** Apply the vocabulary and bounds rules, or discard the input entirely. */
+function normalizePreference(input: PreferenceInput): NormalizedPreference | null {
   if (!isValidPreferenceAttribute(input.attribute)) return null
 
   const value = input.value.trim().toLowerCase()
   if (!value || value.length > 80) return null
 
   const source: PreferenceSource = input.source ?? 'explicit'
-  const weight = clamp(
-    input.weight ?? PREFERENCE_SOURCE_WEIGHTS[source],
-    PREFERENCE_WEIGHT_BOUNDS.min,
-    PREFERENCE_WEIGHT_BOUNDS.max,
-  )
+
+  return {
+    category: input.category ?? null,
+    attribute: input.attribute,
+    value,
+    weight: clamp(
+      input.weight ?? PREFERENCE_SOURCE_WEIGHTS[source],
+      PREFERENCE_WEIGHT_BOUNDS.min,
+      PREFERENCE_WEIGHT_BOUNDS.max,
+    ),
+    source,
+  }
+}
+
+/**
+ * Add or update several explicit preferences in one statement.
+ *
+ * One round trip rather than one per value. Onboarding writes a whole step at
+ * once, and against a database in another region each extra round trip is a
+ * fixed ~200ms tax that the user waits through — so a four-answer step cost
+ * four times what it needed to.
+ *
+ * Semantics are unchanged from the single-value path: explicit statements are
+ * authoritative, and a repeat of the same preference increments its signal
+ * count.
+ */
+export async function upsertPreferences(
+  db: Db,
+  userId: string,
+  inputs: readonly PreferenceInput[],
+): Promise<UserPreference[]> {
+  // Deduplicate on the conflict key, last one winning. Postgres refuses an
+  // ON CONFLICT DO UPDATE that would touch the same row twice in one command,
+  // so a repeated value in a single submission would otherwise fail the batch.
+  const byKey = new Map<string, NormalizedPreference>()
+  for (const input of inputs) {
+    const clean = normalizePreference(input)
+    if (!clean) continue
+    byKey.set(JSON.stringify([clean.category, clean.attribute, clean.value]), clean)
+  }
+
+  const pending = [...byKey.values()]
+  if (pending.length === 0) return []
+
+  // Only placeholders are generated into the SQL text; every value still
+  // travels as a bound parameter.
+  const params: unknown[] = [userId]
+  const tuples = pending.map((preference) => {
+    const base = params.length
+    params.push(
+      preference.category,
+      preference.attribute,
+      preference.value,
+      preference.weight,
+      preference.source,
+    )
+    return `($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, 1)`
+  })
 
   const rows = await db.query<PreferenceRow>(
     `insert into user_preferences (user_id, category, attribute, value, weight, source, signal_count)
-     values ($1, $2, $3, $4, $5, $6, 1)
+     values ${tuples.join(', ')}
      on conflict (user_id, coalesce(category, ''), attribute, value)
      do update set weight = excluded.weight,
                    source = excluded.source,
@@ -105,10 +172,10 @@ export async function upsertPreference(
                    updated_at = now()
      returning id, user_id, category, attribute, value, weight, source, signal_count,
                created_at, updated_at`,
-    [userId, input.category ?? null, input.attribute, value, weight, source],
+    params,
   )
 
-  return rows[0] ? toPreference(rows[0]) : null
+  return rows.map(toPreference)
 }
 
 export async function removePreference(

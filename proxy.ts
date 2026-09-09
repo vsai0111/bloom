@@ -43,7 +43,14 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   )
 
-  const response = supabaseConfigured ? await refreshSupabaseSession(request) : NextResponse.next()
+  // Only refresh when there is a session to refresh. `refreshSupabaseSession`
+  // is a network call to the Supabase Auth API; making it for an anonymous
+  // visitor spends a cross-region round trip discovering that no token exists,
+  // on every request to every public page.
+  const response =
+    supabaseConfigured && hasSessionCookie(request)
+      ? await refreshSupabaseSession(request)
+      : NextResponse.next()
 
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
